@@ -329,7 +329,7 @@ class Operators:
 	ABSENT=AOperator("A","*",[])
 	AND=Operator("and","&",[Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD],truthEvaluation=(lambda a,b:a&b))
 	OR=Operator("or","|",[Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM],truthEvaluation=(lambda a,b:a|b))
-	NOT=Operator("not","~",[Rules.RDM],syntax="!{0}",truthEvaluation=(lambda a:True^a))
+	NOT=Operator("not","~",[],syntax="!{0}",truthEvaluation=(lambda a:True^a))
 	IMPLICATION=Operator("implication",">",[Rules.HS,Rules.MP,Rules.IMPL],truthEvaluation=(lambda a,b:a<=b))
 	EQUIVILENCE=Operator("equivalence","=",[Rules.SYM],truthEvaluation=(lambda a,b:a==b))
 
