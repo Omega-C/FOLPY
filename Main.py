@@ -1,18 +1,23 @@
 from functools import lru_cache
 
+class _anno(str):
+	def __init__(self,name):self.name=name
+	def __repr__(self):return(self.name)
+
 StatementParenthesis=True
 
-_butIn=lambda l,item:[q for q in l if q!=item]
 _condenseIter=lambda x:([x] if not hasattr(x,"__iter__") else x)
 _flatten=lambda *x:[e for a in x for e in (_flatten(*a) if hasattr(a,"__iter__") else (a,))]
 
 class Rule:
-	def __init__(self,stateOut,conditions=[],name=None):
+	"""Class that defines a rule for an operation by taking an input StatementObject and feeding it to a function"""
+	def __init__(self,stateOut:_anno("function"),conditions:_anno("[function,]")=[],name:_anno("str")=None):
 		self.stateOut=stateOut
 		self.conditions=conditions
 		self.name=name
 		
-	def __call__(self,statement,pool):
+	def __call__(self,statement:_anno("Statement"),pool:_anno("Pool"))->_anno("[Statement,]"):
+		"""Returns all evaluated rule functions using the statement, operator, and the """
 		for cond in self.conditions:
 			if not cond(statement,pool):
 				return(None)
@@ -22,8 +27,10 @@ class Rule:
 		return(f"Rule[{self.name}]")
 
 class Operator:
-	Operators={}
-	def __init__(self,name,symbols,rules,syntax=None,truthEvaluation=lambda a,b:True):
+	"""Class that contains rules used in evaluation"""
+	def __init__(self,name:_anno("str"),symbols:_anno("str/[str,]"),rules:_anno("[Rule,]"),syntax:_anno("str")=None,truthEvaluation:_anno("function")=lambda a,b:True,inv=None):
+		self.inv=self
+		if type(inv)==Operator:self.inv=inv
 		self.name=name
 		if (not hasattr(symbols,"__iter__")) or type(symbols)==str:
 			symbols=[symbols]
@@ -31,36 +38,39 @@ class Operator:
 		self.rules=rules
 		self.syntax=f"{{0}}{symbols[0]}{{1}}"
 		if syntax!=None:self.syntax=syntax
-		for sym in self.symbols:self.__class__.Operators[sym]=self
 	
-	def makeSyntax(self,statements):
+	def makeSyntax(self,statements:_anno("[Statement,]"))->_anno("str"):
+		"""Creates a syntax using statements and a guide"""
 		return(self.syntax.format(*statements))
 
 	def __repr__(self):
-		return(self.name)
+		return(self.symbols[0])
 
-	def __eq__(self,other):
+	def __eq__(self,other)->_anno("bool"):
 		if type(other)==AOperator:return(other.__eq__(self))
 		return(self.name==other.name)
 
 class AOperator(Operator):
-	def __init__(self,*args,exclusion=[],**kwargs):
+	"""An operator class that is used for matching comparisons"""
+	def __init__(self,*args,exclusion:_anno("[Statement,]")=[],**kwargs):
 		super().__init__(self,*args,**kwargs)
 		self.exclusion=exclusion
 
-	def __eq__(self,other):
+	def __eq__(self,other)->_anno("bool"):
 		if type(other)!=type(self):return(other not in self.exclusion)
 		return(self.name==other.name)
 
 class Variable:
-	def __init__(self,name):
+	"""A variable object used in Statements"""
+	def __init__(self,name:_anno("str")):
 		self.name=name
 	
 	def __repr__(self):
 		return(self.name)
 
 class Statement:
-	def __init__(self,var,name):
+	"""Statement object"""
+	def __init__(self,var:_anno("Variable"),name:_anno("str")):
 		self.operator=Operators.NOPERATOR
 		self.variable=var
 		self.name=name
@@ -68,13 +78,17 @@ class Statement:
 		self._init()
 
 	def _init(self):
+		"""instance wide initialisation"""
 		self.parents=[None]
 		self.parentRule=None
 		self.symetry=False
 	
+	def __getitem__(self,index):
+		return(self.statements[index])
+	
 	@property
 	def ruleParameters(self):
-		return(self.statements,self.operator,self)
+		return(self,self.operator)
 
 	@property
 	def parentLayers(self):
@@ -85,8 +99,8 @@ class Statement:
 		self.variable=newVar
 
 	lru_cache(maxsize=256)
-	def returnRules(self,pool):
-		return([item for lis in [v for v in [r(self,pool) for r in self.operator.rules] if v!=None] for item in _condenseIter(lis)])
+	def returnRules(self,pool,but=[]):
+		return([item for lis in [v for v in [r(self,pool) for r in [d for d in self.operator.rules if d not in but]] if v!=None] for item in _condenseIter(lis)])
 	
 	def __hash__(self):
 		return(hash((self.name,id(self.variable))))
@@ -152,23 +166,35 @@ class Statement:
 		nw=self._copy()
 		nw.parentRule=rule
 		return(nw)
+	
+	def cc(self,conversion,checks=[]):
+		for check in checks:
+			if not check(self):
+				return(self)
+		return(conversion(self._copy()))
 
 class AStatement(Statement):
-	def __init__(self,u,o=None):
-		self.ident=u
+	def __init__(self,name,o=None):
+		self.name=name
 		self.o=o!=None
 		self.operator=(o if self.o else None)
+		self.no=[]
 
 	def __eq__(self,other):
-		if type(other)==AStatement and o:return((self.ident==other.ident)&(self.operator==other.operator))
-		if type(other)==AStatement:return(self.ident==other.ident)
-		return(True)
+		if type(other)==AStatement and self.o:return((self.name==other.name)&(self.operator==other.operator))
+		if type(other)==AStatement:return(self.name==other.name)
+		return(other not in self.no)
 
 	def __hash__(self):
-		return(hash((self.ident,self.operator)))
+		return(hash((self.name,self.operator)))
 
 	def __repr__(self):
-		return(f"{self.ident}")
+		return(f"{self.name}")
+	
+	def __lshift__(self,other):
+		nw=self._copy()
+		nw.no=[other]+self.no
+		return(nw)
 
 class StatementFunc(Statement):
 	def __init__(self,statements,operator):
@@ -268,14 +294,26 @@ class Pool:
 			return(ret,errs)
 		return(ret)
 
-	def proof(self):
+	def proof(self,but=[]):
 		concluded=self.checkForConclusion()
 		if concluded==None:
 			return(None)
 		proof=list(zip([i for i in range(1,len(self.initialPool)+1)],self.initialPool,[None for i in range(len(self.initialPool))]))
 		numberer=lambda x:[p[0] for p in proof if p[1] in x.parents]
 		paren=lambda x:_flatten([[*paren(b),b] if b.parents!=[None] else b for b in x.parents])
-		steps=[p for p in paren(concluded) if p not in self.initialPool]+[concluded]
+		steps=[p._copy() for p in paren(concluded) if p not in self.initialPool]+[concluded]
+		rep=True
+		while rep:
+			rep=False
+			for s in steps:
+				if s.parentRule in but:
+					steps.remove(s)
+					rep=True
+				for q in range(len(s.parents)):
+					if s.parents[q].parentRule in but:
+						s.parents+=s.parents[q].parents
+						s.parents.remove(s.parents[q])
+						rep=True
 		for n,h in enumerate(steps):
 			proof.append((n+len(self.initialPool)+1,h,(numberer(h),h.parentRule)))
 		return(proof)
@@ -296,42 +334,82 @@ class Insp:
 	Ys=AStatement("Y")
 
 class Rules:
-	_impl=lambda st,op,full,p:((~st[0])|st[1])^full
-	_sym=lambda st,op,full,p:StatementFunc([st[1],st[0]],op)^full
-	_rimpl=lambda st,op,full,p:(~st[0]>st[1])^full
-	_equiv1=lambda st,op,full,p:(st[0]>st[1])&(st[1]>st[0])^full
-	_ds=lambda st,op,full,p:st[1]^[full,p.getValue(~st[0])]
-	_mp=lambda st,op,full,p:st[1]^[full,p.getValue(st[0])]
-	_hs=lambda st,op,full,p:[(st[0]>q.statements[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==st[1])&(x.operator==Operators.IMPLICATION))]
-	_dm=lambda st,op,full,p:(~StatementFunc([~st[0],~st[1]],(Operators.AND if op==Operators.OR else Operators.OR)))^full
-	_rdm=lambda st,op,full,p:(StatementFunc([~st[0].statements[0],~st[0].statements[1]],(Operators.AND if op==Operators.OR else Operators.OR)))^full
-	_simp=lambda st,op,full,p:[st[0]^full,st[1]^full]
-	_addOrM=lambda st,p:lambda match:((~(Insp.Xs|st).sym)|Insp.Xs) in [*match.returnRules(p),match]#ITS THE REUTRN RULES
-	_addImplM=lambda st,p:lambda match:((~(Insp.Xs>st))|Insp.Xs) in [*match.returnRules(p),match]
-	_addOr=lambda st,op,full,p:[((full|q)^full) for q in p.getValueMatch(Rules._addOrM(full,p))]
-	_addImpl=lambda st,op,full,p:[((full|(~q))^full) for q in p.getValueMatch(Rules._addImplM(full,p))]
-	_add=lambda st,op,full,p:Rules._addImpl(st,op,full,p)+Rules._addOr(st,op,full,p)
-	#match if ~(a|b)|x in return rules or is object
+	_recurse=[]
+	_implConv=(lambda m:(~m[0])|m[1],[lambda m:m.operator==Operators.IMPLICATION])
+	_equivConv=(lambda m:((m[0]&m[1])|((~m[0])&(~m[1]))),[lambda m:m.operator==Operators.EQUIVILENCE])
+	_dmConv=(lambda m:(lambda q:StatementFunc([~(q[0]),~(q[1])],q.operator.inv))(m[0].cc(*Rules._equivConv).cc(*Rules._implConv)),[lambda m:m.operator==Operators.NOT,lambda m:len(m[0].statements)>1])
+	_aoConv=lambda m:m.cc(*Rules._implConv).cc(*Rules._equivConv).cc(*Rules._dmConv)
+	def _andOrConv(m):
+		m=Rules._aoConv(m)
+		if [m]==m.statements:
+			return(m)
+		return(StatementFunc([Rules._andOrConv(s) for s in m.statements],m.operator))
+	_impl=lambda full,op,p:((~full[0])|full[1])^full
+	_sym=lambda full,op,p:StatementFunc([full[1],full[0]],op)^full
+	_rimpl=lambda full,op,p:(~full[0]>full[1])^full
+	_equiv1=lambda full,op,p:(full[0]>full[1])&(full[1]>full[0])^full
+	_ds=lambda full,op,p:full[1]^[full,p.getValue(~full[0])]
+	_mp=lambda full,op,p:full[1]^[full,p.getValue(full[0])]
+	_hs=lambda full,op,p:[(st[0]>q.statements[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==full[1])&(x.operator==Operators.IMPLICATION))]
+	_dm=lambda full,op,p:(~StatementFunc([~full[0],~full[1]],full.operator.inv))^full
+	_rdm=lambda full,op,p:(StatementFunc([~full[0][0],~full[0][1]],full[0].operator.inv))^full
+	_simp=lambda full,op,p:[full[0]^full,full[1]^full]
+	def _add(full,op,p):
+		ret=[]
+		ops=(Operators.IMPLICATION,Operators.OR,Operators.EQUIVILENCE)
+		compare=(~(Insp.Xs*full).sym)|Insp.Xs
+		search=lambda match:compare==match
+		found=p.getValueMatch(search)
+		for q in found:
+			mainF=q[0][0]
+			if mainF.operator not in ops:
+				continue
+			a,b=mainF[0],mainF[1]
+			if mainF.operator==Operators.IMPLICATION:
+				a=~a
+			if a==full:ret.append((a|b)^full)
+			else:ret.append((b|a)^full)
+		return(ret)
+	def _conj(full,op,p):
+		ret=[]
+		ops=(Operators.AND,Operators.EQUIVILENCE)
+		compare=(~(Insp.Xs*full).sym)|Insp.Xs
+		search=lambda match:compare==match
+		found=p.getValueMatch(search)
+		#do double checking for deep or evaluation in single return rule convolution
+		for q in found:
+			mainF=q[0][0]
+			if mainF.operator not in ops:
+				continue
+			a,b=mainF[0],mainF[1]
+			if (p.getValue(b)==b)&(p.getValue(a)==a):
+				if a==full:ret.append((a&b)^[p.getValue(a),p.getValue(b)])
+				else:ret.append((b&a)^[p.getValue(b),p.getValue(a)])
+		return(ret)
 
-	HS=Rule(_hs,name="Hypothetical Syllogism")
 	ADD=Rule(_add,name="Addition")
+	CONJ=Rule(_conj,name="Conjunction")
+	_recurse.append(ADD)
+	_recurse.append(CONJ)
+	HS=Rule(_hs,name="Hypothetical Syllogism")
 	SIMP=Rule(_simp,name="Simplification")
 	DM=Rule(_dm,name="De Morgan's Rule")
 	RDM=Rule(_rdm,name="De Morgan's Rule")
-	DS=Rule(_ds,conditions=[lambda st,p:p.getValue(~st.statements[0])],name="Disjunctive Syllogism")
-	MP=Rule(_mp,conditions=[lambda st,p:p.getValue(st.statements[0])],name="Modus Ponens")
+	DS=Rule(_ds,conditions=[lambda st,p:p.getValue(~(st[0]))],name="Disjunctive Syllogism")
+	MP=Rule(_mp,conditions=[lambda st,p:p.getValue(st[0])],name="Modus Ponens")
 	IMPL=Rule(_impl,name="Implication")
 	RIMPL=Rule(_rimpl,name="Implication")
 	SYM=Rule(_sym,name="Commutativity")
 
 class Operators:
-	NOPERATOR=Operator("def","",[],syntax="{0}",truthEvaluation=(lambda args:args))
+	NOPERATOR=Operator("def","",[Rules.ADD,Rules.CONJ],syntax="{0}",truthEvaluation=(lambda args:args))
 	ABSENT=AOperator("A","*",[])
-	AND=Operator("and","&",[Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD],truthEvaluation=(lambda a,b:a&b))
-	OR=Operator("or","|",[Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM],truthEvaluation=(lambda a,b:a|b))
-	NOT=Operator("not","~",[],syntax="!{0}",truthEvaluation=(lambda a:True^a))
-	IMPLICATION=Operator("implication",">",[Rules.HS,Rules.MP,Rules.IMPL],truthEvaluation=(lambda a,b:a<=b))
-	EQUIVILENCE=Operator("equivalence","=",[Rules.SYM],truthEvaluation=(lambda a,b:a==b))
+	AND=Operator("and","&",[Rules.ADD,Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD,Rules.CONJ],truthEvaluation=(lambda a,b:a&b))
+	OR=Operator("or","|",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ],truthEvaluation=(lambda a,b:a|b),inv=AND)
+	AND.inv=OR
+	NOT=Operator("not","~",[Rules.ADD,Rules.CONJ,Rules.RDM],syntax="!{0}",truthEvaluation=(lambda a:True^a))
+	IMPLICATION=Operator("implication",">",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ],truthEvaluation=(lambda a,b:a<=b))
+	EQUIVILENCE=Operator("equivalence","=",[Rules.ADD,Rules.SYM,Rules.CONJ],truthEvaluation=(lambda a,b:a==b))
 
 def _test():
 	global StatementParenthesis
@@ -342,18 +420,18 @@ def _test():
 	b=Statement(x,"B")
 	c=Statement(x,"C")
 	d=Statement(x,"D")
-	conc=c
-	p=Pool([(~a|b)>c,a],conc)
+	conc=d
+	e=~((a>b)&d)
+	print((Rules._andOrConv(e)))
+	p=Pool([a,(c|a)>d],conc)
 	p.completePool()
-	print(((Insp.Xs>b)>c)==(((b*a).sym)>c))
-	print(Operators.ABSENT==Operators.AND)
-	print(Rules._addOrM(a,p)((~(a|b))|c))
 	hal=p.checkForConclusion()
-	print(p.contradictions)
-	print(p.pool,hal)
+	print("conclusion:",hal)
+	print("contradictions:",p.contradictions)
 	if hal==None:return()
+	print("proof:")
 	propformat=lambda x:f"P{x[0]}) {x[1]} "+("" if x[2]==None else f"({', '.join([f'P{j}' for j in x[2][0]])} | {x[2][1].name})")
-	print("\n".join(map(propformat,p.proof()))+f"\nC) {conc}")
+	print("\n".join(map(propformat,p.proof(but=[])))+f"\nC) {conc}")
 
 if __name__=="__main__":
 	_test()
