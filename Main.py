@@ -308,6 +308,7 @@ class Pool:
 		numberer=lambda x:[p[0] for p in proof if p[1] in x.parents]
 		paren=lambda x:_flatten([[*paren(b),b] if b.parents!=[None] else b for b in x.parents])
 		steps=[p._copy() for p in paren(concluded) if p not in self.initialPool]+[concluded]
+		steps=[i for n,i in enumerate(steps) if i not in steps[:n]]
 		rep=True
 		while rep:
 			rep=False
@@ -385,7 +386,7 @@ class Rules:
 		fm=Rules._andOrConv(full).sym
 		search=lambda match:compare1==match
 		found=p.getValueMatch(search)
-		pruned=[Rules._andOrConv(q) for q in found]
+		pruned=[Rules._andOrConv(q) for q in found]+[Rules._andOrConv(~p.conclusion)]
 		foundPruned=lambda a,b:a^b if ((len(a.statements)==1)|(Rules._andOrConv(~a)==fm)) else [foundPruned(h,a) for h in a.statements]
 		pruned=[foundPruned(h,h) for h in pruned]
 		prunes=[Rules._andOrConv(~p)^p.parents for p in _flatten(pruned)]
@@ -413,7 +414,7 @@ class Rules:
 		fm=Rules._andOrConv(full).sym
 		search=lambda match:compare1==match
 		found=p.getValueMatch(search)
-		pruned=[Rules._andOrConv(q) for q in found]
+		pruned=[Rules._andOrConv(q) for q in found]+[Rules._andOrConv(~p.conclusion)]
 		foundPruned=lambda a,b:a^b if ((len(a.statements)==1)|(Rules._andOrConv(~a)==fm)) else [foundPruned(h,a) for h in a.statements]
 		pruned=[foundPruned(h,h) for h in pruned]
 		prunes=[Rules._andOrConv(~p)^p.parents for p in _flatten(pruned)]
@@ -468,7 +469,7 @@ def _test():
 	r=Statement(x,"r")
 	s=Statement(x,"s")
 	t=Statement(x,"t")
-	conc=~s
+	conc=~(s|t)
 	p=Pool([
 		(~p|q)>(~(r&s)),
 		(r&p)>t,
@@ -476,9 +477,7 @@ def _test():
 		],conc)
 	p.toConclusion()
 	hal=p.checkForConclusion()
-	#print("pool:",p.pool)
 	print("conclusion:",hal)
-	print(p.pool.count(r))
 	print("contradictions:",p.contradictions)
 	if hal==None:return()
 	print("proof:")
@@ -487,4 +486,4 @@ def _test():
 
 if __name__=="__main__":
 	import timeit
-	print("Time:",timeit.timeit(_test,number=1)*1e+3)
+	print("Time (ms):",int(timeit.timeit(_test,number=1)*1e+7)/1e+4)
