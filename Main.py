@@ -6,6 +6,7 @@ class _anno(str):
 
 StatementParenthesis=True
 
+
 _condenseIter=lambda x:([x] if not hasattr(x,"__iter__") else x)
 _flatten=lambda *x:[e for a in x for e in (_flatten(*a) if hasattr(a,"__iter__") else (a,))]
 
@@ -106,6 +107,7 @@ class Statement:
 		return(hash((self.name,id(self.variable))))
 
 	def __repr__(self):
+		return(self.name)#remove for implementation
 		if StatementParenthesis:
 			return(f"{self.name}({self.variable})")
 		return(f"{self.name}{self.variable}")
@@ -176,9 +178,11 @@ class Statement:
 class AStatement(Statement):
 	def __init__(self,name,o=None):
 		self.name=name
+		self.statements=[self]
 		self.o=o!=None
-		self.operator=(o if self.o else None)
+		self.operator=(o if self.o else AOperator("A","*",[]))
 		self.no=[]
+		self._init()
 
 	def __eq__(self,other):
 		if type(other)==AStatement and self.o:return((self.name==other.name)&(self.operator==other.operator))
@@ -299,6 +303,8 @@ class Pool:
 		if concluded==None:
 			return(None)
 		proof=list(zip([i for i in range(1,len(self.initialPool)+1)],self.initialPool,[None for i in range(len(self.initialPool))]))
+		if concluded.parents==[None]:
+			return(proof)
 		numberer=lambda x:[p[0] for p in proof if p[1] in x.parents]
 		paren=lambda x:_flatten([[*paren(b),b] if b.parents!=[None] else b for b in x.parents])
 		steps=[p._copy() for p in paren(concluded) if p not in self.initialPool]+[concluded]
@@ -325,6 +331,20 @@ class Pool:
 			if (~item in self.pool) and not ([~item,item] in contradictions):
 				contradictions.append([item,~item])
 		return(contradictions)
+	
+	def reset(self):
+		self.pool=self.initialPool
+	
+	def toConclusion(self):
+		prevpool=self.pool.copy()
+		self.fullPool()
+		newpool=self.pool.copy()
+		if self.checkForConclusion()!=None:return()
+		while prevpool!=newpool:
+			prevpool=newpool
+			self.fullPool()
+			newpool=self.pool.copy()
+			if self.checkForConclusion()!=None:return()
 
 class Insp:
 	X=Variable(name="x")
@@ -350,41 +370,68 @@ class Rules:
 	_equiv1=lambda full,op,p:(full[0]>full[1])&(full[1]>full[0])^full
 	_ds=lambda full,op,p:full[1]^[full,p.getValue(~full[0])]
 	_mp=lambda full,op,p:full[1]^[full,p.getValue(full[0])]
-	_hs=lambda full,op,p:[(st[0]>q.statements[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==full[1])&(x.operator==Operators.IMPLICATION))]
+	_hs=lambda full,op,p:[(full[0]>q[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==full[1])&(x.operator==Operators.IMPLICATION))]
 	_dm=lambda full,op,p:(~StatementFunc([~full[0],~full[1]],full.operator.inv))^full
 	_rdm=lambda full,op,p:(StatementFunc([~full[0][0],~full[0][1]],full[0].operator.inv))^full
 	_simp=lambda full,op,p:[full[0]^full,full[1]^full]
+	_equiv1=lambda full,op,p:((full[0]&full[1])|(~full[0]&~full[1]))^full
+	_equiv2=lambda full,op,p:((full[0]>full[1])&(full[1]>full[0]))^full
 	def _add(full,op,p):
+		#weird double time issue
 		ret=[]
-		ops=(Operators.IMPLICATION,Operators.OR,Operators.EQUIVILENCE)
-		compare=(~(Insp.Xs*full).sym)|Insp.Xs
-		search=lambda match:compare==match
+		ops=(Operators.OR,)
+		compare1=(~Insp.Xs)|Insp.Xs
+		compare2=(Insp.Xs*Insp.Xs)
+		fm=Rules._andOrConv(full).sym
+		search=lambda match:compare1==match
 		found=p.getValueMatch(search)
-		for q in found:
-			mainF=q[0][0]
-			if mainF.operator not in ops:
-				continue
-			a,b=mainF[0],mainF[1]
-			if mainF.operator==Operators.IMPLICATION:
-				a=~a
-			if a==full:ret.append((a|b)^full)
-			else:ret.append((b|a)^full)
+		pruned=[Rules._andOrConv(q) for q in found]
+		foundPruned=lambda a,b:a^b if ((len(a.statements)==1)|(Rules._andOrConv(~a)==fm)) else [foundPruned(h,a) for h in a.statements]
+		pruned=[foundPruned(h,h) for h in pruned]
+		prunes=[Rules._andOrConv(~p)^p.parents for p in _flatten(pruned)]
+		for p in prunes:
+			if fm==p:
+				if p.parents[0].operator.inv in ops:
+					par=Rules._andOrConv(~p.parents[0])
+					a,b=par.statements
+					if a==fm:
+						a=full
+						ret.append((a|b)^full)
+					else:
+						b=full
+						ret.append((b|a)^full)
 		return(ret)
+		
 	def _conj(full,op,p):
+		#return([])
+		#integrate better time effeciency and fix bugs
+		#add capture for conclusion
 		ret=[]
-		ops=(Operators.AND,Operators.EQUIVILENCE)
-		compare=(~(Insp.Xs*full).sym)|Insp.Xs
-		search=lambda match:compare==match
+		ops=(Operators.AND,)
+		compare1=(~Insp.Xs)|Insp.Xs
+		compare2=(Insp.Xs*Insp.Xs)
+		fm=Rules._andOrConv(full).sym
+		search=lambda match:compare1==match
 		found=p.getValueMatch(search)
-		#do double checking for deep or evaluation in single return rule convolution
-		for q in found:
-			mainF=q[0][0]
-			if mainF.operator not in ops:
-				continue
-			a,b=mainF[0],mainF[1]
-			if (p.getValue(b)==b)&(p.getValue(a)==a):
-				if a==full:ret.append((a&b)^[p.getValue(a),p.getValue(b)])
-				else:ret.append((b&a)^[p.getValue(b),p.getValue(a)])
+		pruned=[Rules._andOrConv(q) for q in found]
+		foundPruned=lambda a,b:a^b if ((len(a.statements)==1)|(Rules._andOrConv(~a)==fm)) else [foundPruned(h,a) for h in a.statements]
+		pruned=[foundPruned(h,h) for h in pruned]
+		prunes=[Rules._andOrConv(~p)^p.parents for p in _flatten(pruned)]
+		for pr in prunes:
+			if fm==pr:
+				if pr.parents[0].operator.inv in ops:
+					par=Rules._andOrConv(~pr.parents[0])
+					a,b=par.statements
+					if a==fm:
+						a=full
+						if b==p.getValue(b):
+							b=p.getValue(b)
+							ret.append((a&b)^[full,b])
+					else:
+						b=full
+						if a==p.getValue(a):
+							a=p.getValue(a)
+							ret.append((b&a)^[full,a])
 		return(ret)
 
 	ADD=Rule(_add,name="Addition")
@@ -394,7 +441,7 @@ class Rules:
 	HS=Rule(_hs,name="Hypothetical Syllogism")
 	SIMP=Rule(_simp,name="Simplification")
 	DM=Rule(_dm,name="De Morgan's Rule")
-	RDM=Rule(_rdm,name="De Morgan's Rule")
+	RDM=Rule(_rdm,name="De Morgan's Rule",conditions=[lambda st,p:len(st[0].statements)>1])
 	DS=Rule(_ds,conditions=[lambda st,p:p.getValue(~(st[0]))],name="Disjunctive Syllogism")
 	MP=Rule(_mp,conditions=[lambda st,p:p.getValue(st[0])],name="Modus Ponens")
 	IMPL=Rule(_impl,name="Implication")
@@ -404,34 +451,40 @@ class Rules:
 class Operators:
 	NOPERATOR=Operator("def","",[Rules.ADD,Rules.CONJ],syntax="{0}",truthEvaluation=(lambda args:args))
 	ABSENT=AOperator("A","*",[])
-	AND=Operator("and","&",[Rules.ADD,Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD,Rules.CONJ],truthEvaluation=(lambda a,b:a&b))
-	OR=Operator("or","|",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ],truthEvaluation=(lambda a,b:a|b),inv=AND)
+	AND=Operator("and","∧",[Rules.ADD,Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD,Rules.CONJ],truthEvaluation=(lambda a,b:a&b))
+	OR=Operator("or","∨",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ],truthEvaluation=(lambda a,b:a|b),inv=AND)
 	AND.inv=OR
-	NOT=Operator("not","~",[Rules.ADD,Rules.CONJ,Rules.RDM],syntax="!{0}",truthEvaluation=(lambda a:True^a))
-	IMPLICATION=Operator("implication",">",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ],truthEvaluation=(lambda a,b:a<=b))
-	EQUIVILENCE=Operator("equivalence","=",[Rules.ADD,Rules.SYM,Rules.CONJ],truthEvaluation=(lambda a,b:a==b))
+	NOT=Operator("not","¬",[Rules.ADD,Rules.CONJ,Rules.RDM],syntax="¬{0}",truthEvaluation=(lambda a:True^a))
+	IMPLICATION=Operator("implication","→",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ],truthEvaluation=(lambda a,b:a<=b))
+	EQUIVILENCE=Operator("equivalence","≡",[Rules.ADD,Rules.SYM,Rules.CONJ],truthEvaluation=(lambda a,b:a==b))
 
 def _test():
 	global StatementParenthesis
 	StatementParenthesis=False
 	x=Insp.X
 	y=Insp.Y
-	a=Statement(x,"A")
-	b=Statement(x,"B")
-	c=Statement(x,"C")
-	d=Statement(x,"D")
-	conc=d
-	e=~((a>b)&d)
-	print((Rules._andOrConv(e)))
-	p=Pool([a,(c|a)>d],conc)
-	p.completePool()
+	p=Statement(x,"p")
+	q=Statement(x,"q")
+	r=Statement(x,"r")
+	s=Statement(x,"s")
+	t=Statement(x,"t")
+	conc=~s
+	p=Pool([
+		(~p|q)>(~(r&s)),
+		(r&p)>t,
+		r&(~t)
+		],conc)
+	p.toConclusion()
 	hal=p.checkForConclusion()
+	#print("pool:",p.pool)
 	print("conclusion:",hal)
+	print(p.pool.count(r))
 	print("contradictions:",p.contradictions)
 	if hal==None:return()
 	print("proof:")
 	propformat=lambda x:f"P{x[0]}) {x[1]} "+("" if x[2]==None else f"({', '.join([f'P{j}' for j in x[2][0]])} | {x[2][1].name})")
-	print("\n".join(map(propformat,p.proof(but=[])))+f"\nC) {conc}")
+	print("\n".join(map(propformat,p.proof(but=[Rules.SYM])))+f"\nC) {conc}")
 
 if __name__=="__main__":
-	_test()
+	import timeit
+	print("Time:",timeit.timeit(_test,number=1)*1e+3)
