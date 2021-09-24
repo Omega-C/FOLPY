@@ -5,7 +5,7 @@ class _anno(str):
 	def __repr__(self):return(self.name)
 
 StatementParenthesis=True
-
+StatementVariables=False
 
 _condenseIter=lambda x:([x] if not hasattr(x,"__iter__") else x)
 _flatten=lambda *x:[e for a in x for e in (_flatten(*a) if hasattr(a,"__iter__") else (a,))]
@@ -107,9 +107,8 @@ class Statement:
 		return(hash((self.name,id(self.variable))))
 
 	def __repr__(self):
-		return(self.name)#remove for implementation
-		if StatementParenthesis:
-			return(f"{self.name}({self.variable})")
+		if StatementVariables:return(self.name)
+		if StatementParenthesis:return(f"{self.name}({self.variable})")
 		return(f"{self.name}{self.variable}")
 	
 	def compareSym(self,other):
@@ -369,6 +368,7 @@ class Rules:
 	_sym=lambda full,op,p:StatementFunc([full[1],full[0]],op)^full
 	_rimpl=lambda full,op,p:(~full[0]>full[1])^full
 	_equiv1=lambda full,op,p:(full[0]>full[1])&(full[1]>full[0])^full
+	_mt=lambda full,op,p:~full[0]^[full,p.getValue(~full[1])]
 	_ds=lambda full,op,p:full[1]^[full,p.getValue(~full[0])]
 	_mp=lambda full,op,p:full[1]^[full,p.getValue(full[0])]
 	_hs=lambda full,op,p:[(full[0]>q[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==full[1])&(x.operator==Operators.IMPLICATION))]
@@ -445,6 +445,7 @@ class Rules:
 	RDM=Rule(_rdm,name="De Morgan's Rule",conditions=[lambda st,p:len(st[0].statements)>1])
 	DS=Rule(_ds,conditions=[lambda st,p:p.getValue(~(st[0]))],name="Disjunctive Syllogism")
 	MP=Rule(_mp,conditions=[lambda st,p:p.getValue(st[0])],name="Modus Ponens")
+	MT=Rule(_mt,conditions=[lambda st,p:p.getValue(~st[1])],name="Modus Tollens")
 	IMPL=Rule(_impl,name="Implication")
 	RIMPL=Rule(_rimpl,name="Implication")
 	SYM=Rule(_sym,name="Commutativity")
@@ -456,30 +457,37 @@ class Operators:
 	OR=Operator("or","∨",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ],truthEvaluation=(lambda a,b:a|b),inv=AND)
 	AND.inv=OR
 	NOT=Operator("not","¬",[Rules.ADD,Rules.CONJ,Rules.RDM],syntax="¬{0}",truthEvaluation=(lambda a:True^a))
-	IMPLICATION=Operator("implication","→",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ],truthEvaluation=(lambda a,b:a<=b))
+	IMPLICATION=Operator("implication","→",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ,Rules.MT],truthEvaluation=(lambda a,b:a<=b))
 	EQUIVILENCE=Operator("equivalence","≡",[Rules.ADD,Rules.SYM,Rules.CONJ],truthEvaluation=(lambda a,b:a==b))
 
 def _test():
-	global StatementParenthesis
-	StatementParenthesis=False
+	global StatementVariables
+	StatementVariables=True
+
 	x=Insp.X
-	y=Insp.Y
 	p=Statement(x,"p")
 	q=Statement(x,"q")
 	r=Statement(x,"r")
 	s=Statement(x,"s")
 	t=Statement(x,"t")
+
 	conc=~(s|t)
-	p=Pool([
+	propositions=[
 		(~p|q)>(~(r&s)),
 		(r&p)>t,
 		r&(~t)
-		],conc)
+		]
+
+	p=Pool(propositions,conc)
+
 	p.toConclusion()
-	hal=p.checkForConclusion()
-	print("conclusion:",hal)
+	conclusive=p.checkForConclusion()
+
+	print("conclusion:",conclusive)
 	print("contradictions:",p.contradictions)
-	if hal==None:return()
+
+	if conclusive==None:return()
+
 	print("proof:")
 	propformat=lambda x:f"P{x[0]}) {x[1]} "+("" if x[2]==None else f"({', '.join([f'P{j}' for j in x[2][0]])} | {x[2][1].name})")
 	print("\n".join(map(propformat,p.proof(but=[Rules.SYM])))+f"\nC) {conc}")
