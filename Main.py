@@ -12,17 +12,20 @@ _flatten=lambda *x:[e for a in x for e in (_flatten(*a) if hasattr(a,"__iter__")
 
 class Rule:
 	"""Class that defines a rule for an operation by taking an input StatementObject and feeding it to a function"""
-	def __init__(self,stateOut:_anno("function"),conditions:_anno("[function,]")=[],name:_anno("str")=None):
+	def __init__(self,stateOut:_anno("function"),conditions:_anno("[function,]")=[],name:_anno("str")=None,flagsIn=[],flagsOut=[]):
 		self.stateOut=stateOut
 		self.conditions=conditions
 		self.name=name
+		self.flagsOut=flagsOut
+		self.flagsIn=flagsIn
 		
 	def __call__(self,statement:_anno("Statement"),pool:_anno("Pool"))->_anno("[Statement,]"):
 		"""Returns all evaluated rule functions using the statement, operator, and the """
 		for cond in self.conditions:
 			if not cond(statement,pool):
 				return(None)
-		return([k%self for k in _condenseIter(self.stateOut(*statement.ruleParameters,pool))])
+		statement=statement>>self.flagsIn
+		return([(k%self)>>self.flagsOut for k in _condenseIter(self.stateOut(*statement.ruleParameters,pool))])
 
 	def __repr__(self):
 		return(f"Rule[{self.name}]")
@@ -30,7 +33,7 @@ class Rule:
 class Operator:
 	"""Class that contains rules used in evaluation"""
 	def __init__(self,name:_anno("str"),symbols:_anno("str/[str,]"),rules:_anno("[Rule,]"),syntax:_anno("str")=None,truthEvaluation:_anno("function")=lambda a,b:True,inv=None):
-		self.inv=self
+		self.inv=None
 		if type(inv)==Operator:self.inv=inv
 		self.name=name
 		if (not hasattr(symbols,"__iter__")) or type(symbols)==str:
@@ -83,6 +86,7 @@ class Statement:
 		self.parents=[None]
 		self.parentRule=None
 		self.symetry=False
+		self.flags=[]
 	
 	def __getitem__(self,index):
 		return(self.statements[index])
@@ -173,6 +177,12 @@ class Statement:
 			if not check(self):
 				return(self)
 		return(conversion(self._copy()))
+	
+	def __rshift__(self,flag):
+		flag=_condenseIter(flag)
+		nw=self._copy()
+		nw.flags+=[f for f in flag if f not in self.flags]
+		return(nw)
 
 class AStatement(Statement):
 	def __init__(self,name,o=None):
@@ -198,6 +208,7 @@ class AStatement(Statement):
 		nw=self._copy()
 		nw.no=[other]+self.no
 		return(nw)
+	
 
 class StatementFunc(Statement):
 	def __init__(self,statements,operator):
@@ -359,11 +370,11 @@ class Rules:
 	_equivConv=(lambda m:((m[0]&m[1])|((~m[0])&(~m[1]))),[lambda m:m.operator==Operators.EQUIVILENCE])
 	_dmConv=(lambda m:(lambda q:StatementFunc([~(q[0]),~(q[1])],q.operator.inv))(m[0].cc(*Rules._equivConv).cc(*Rules._implConv)),[lambda m:m.operator==Operators.NOT,lambda m:len(m[0].statements)>1])
 	_aoConv=lambda m:m.cc(*Rules._implConv).cc(*Rules._equivConv).cc(*Rules._dmConv)
-	def _andOrConv(m):
+	def _andOrConv(m,recurse=-1):
 		m=Rules._aoConv(m)
-		if [m]==m.statements:
+		if [m]==m.statements or recurse==0:
 			return(m)
-		return(StatementFunc([Rules._andOrConv(s) for s in m.statements],m.operator))
+		return(StatementFunc([Rules._andOrConv(s,recurse=recurse-1) for s in m.statements],m.operator))
 	_impl=lambda full,op,p:((~full[0])|full[1])^full
 	_sym=lambda full,op,p:StatementFunc([full[1],full[0]],op)^full
 	_rimpl=lambda full,op,p:(~full[0]>full[1])^full
@@ -374,12 +385,15 @@ class Rules:
 	_hs=lambda full,op,p:[(full[0]>q[1])^[full,q] for q in p.getValueMatch(lambda x:(x.statements[0]==full[1])&(x.operator==Operators.IMPLICATION))]
 	_dm=lambda full,op,p:(~StatementFunc([~full[0],~full[1]],full.operator.inv))^full
 	_rdm=lambda full,op,p:(StatementFunc([~full[0][0],~full[0][1]],full[0].operator.inv))^full
+	_tra=lambda full,op,p:(~full[1]>~full[0])^full
 	_simp=lambda full,op,p:[full[0]^full,full[1]^full]
 	_equiv1=lambda full,op,p:((full[0]&full[1])|(~full[0]&~full[1]))^full
 	_equiv2=lambda full,op,p:((full[0]>full[1])&(full[1]>full[0]))^full
+	_dist=lambda full,op,p:StatementFunc([StatementFunc([full[0],full[1][0]],full.operator),StatementFunc([full[0],full[1][1]],full.operator)],full.operator.inv)^full#continue
 	def _add(full,op,p):
 		#weird double time issue
 		ret=[]
+		#return([])
 		ops=(Operators.OR,)
 		compare1=(~Insp.Xs)|Insp.Xs
 		compare2=(Insp.Xs*Insp.Xs)
@@ -404,9 +418,9 @@ class Rules:
 		return(ret)
 		
 	def _conj(full,op,p):
-		#return([])
 		#integrate better time effeciency and fix bugs
 		#add capture for conclusion
+		#return([])
 		ret=[]
 		ops=(Operators.AND,)
 		compare1=(~Insp.Xs)|Insp.Xs
@@ -435,29 +449,32 @@ class Rules:
 							ret.append((b&a)^[full,a])
 		return(ret)
 
+	_flagCheck=lambda flag:lambda st,pool:flag not in st.flags
 	ADD=Rule(_add,name="Addition")
+	DIST=Rule(_dist,name="Distribution",conditions=[lambda st,p:st[0]*(StatementFunc([Insp.Xs,Insp.Xs],st.operator.inv))==st,lambda st,p:st[0]*(StatementFunc([st[0][0],Insp.Xs],st.operator.inv))!=st,_flagCheck("dist")],flagsOut=["dist"])
 	CONJ=Rule(_conj,name="Conjunction")
+	TRA=Rule(_tra,name="Transposition",conditions=[_flagCheck("tra")],flagsOut=["tra"])
 	_recurse.append(ADD)
 	_recurse.append(CONJ)
 	HS=Rule(_hs,name="Hypothetical Syllogism")
-	SIMP=Rule(_simp,name="Simplification")
-	DM=Rule(_dm,name="De Morgan's Rule")
-	RDM=Rule(_rdm,name="De Morgan's Rule",conditions=[lambda st,p:len(st[0].statements)>1])
+	SIMP=Rule(_simp,name="Simplification",conditions=[_flagCheck("simp")],flagsIn=["simp"])
+	DM=Rule(_dm,name="De Morgan's Rule",conditions=[_flagCheck("dm")],flagsIn=["dm"],flagsOut=["dm"])
+	RDM=Rule(_rdm,name="De Morgan's Rule",conditions=[lambda st,p:len(st[0].statements)>1,_flagCheck("dm")],flagsIn=["dm"],flagsOut=["dm"])
 	DS=Rule(_ds,conditions=[lambda st,p:p.getValue(~(st[0]))],name="Disjunctive Syllogism")
 	MP=Rule(_mp,conditions=[lambda st,p:p.getValue(st[0])],name="Modus Ponens")
 	MT=Rule(_mt,conditions=[lambda st,p:p.getValue(~st[1])],name="Modus Tollens")
-	IMPL=Rule(_impl,name="Implication")
-	RIMPL=Rule(_rimpl,name="Implication")
-	SYM=Rule(_sym,name="Commutativity")
+	IMPL=Rule(_impl,name="Implication",conditions=[_flagCheck("impl")],flagsIn=["impl"],flagsOut=["impl"])
+	RIMPL=Rule(_rimpl,name="Implication",conditions=[_flagCheck("impl")],flagsIn=["impl"],flagsOut=["impl"])
+	SYM=Rule(_sym,name="Commutativity",conditions=[_flagCheck("sym")],flagsIn=["sym"],flagsOut=["sym"])
 
 class Operators:
 	NOPERATOR=Operator("def","",[Rules.ADD,Rules.CONJ],syntax="{0}",truthEvaluation=(lambda args:args))
 	ABSENT=AOperator("A","*",[])
-	AND=Operator("and","∧",[Rules.ADD,Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD,Rules.CONJ],truthEvaluation=(lambda a,b:a&b))
-	OR=Operator("or","∨",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ],truthEvaluation=(lambda a,b:a|b),inv=AND)
+	AND=Operator("and","∧",[Rules.ADD,Rules.SYM,Rules.DM,Rules.SIMP,Rules.ADD,Rules.CONJ,Rules.DIST],truthEvaluation=(lambda a,b:a&b))
+	OR=Operator("or","∨",[Rules.ADD,Rules.SYM,Rules.DS,Rules.RIMPL,Rules.DM,Rules.CONJ,Rules.DIST],truthEvaluation=(lambda a,b:a|b),inv=AND)
 	AND.inv=OR
 	NOT=Operator("not","¬",[Rules.ADD,Rules.CONJ,Rules.RDM],syntax="¬{0}",truthEvaluation=(lambda a:True^a))
-	IMPLICATION=Operator("implication","→",[Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ,Rules.MT],truthEvaluation=(lambda a,b:a<=b))
+	IMPLICATION=Operator("implication","→",[Rules.TRA,Rules.ADD,Rules.HS,Rules.MP,Rules.IMPL,Rules.CONJ,Rules.MT],truthEvaluation=(lambda a,b:a<=b))
 	EQUIVILENCE=Operator("equivalence","≡",[Rules.ADD,Rules.SYM,Rules.CONJ],truthEvaluation=(lambda a,b:a==b))
 
 def _test():
@@ -471,21 +488,24 @@ def _test():
 	s=Statement(x,"s")
 	t=Statement(x,"t")
 
-	conc=~(s|t)
+	conc=~s&t
+	#implement reverse distribution and recursive answering FOCUS ON MAKING TIME EFFICENT, addition and conjunction should be main focuses. make distribution strategic first. note to self to add flags with lshift. do flags mod and flags out
 	propositions=[
-		(~p|q)>(~(r&s)),
-		(r&p)>t,
-		r&(~t)
+		(p&q)|(r&s),
+		(q|r)>~s,
+		t
 		]
-
+		
 	p=Pool(propositions,conc)
 
-	p.toConclusion()
+	p.toConclusion() 
 	conclusive=p.checkForConclusion()
+	print("\n".join([f"Statement: {h}\nProperties\n\t"+str({k:str(h).replace(",","...") for k,h in vars(h).items()}).replace("'","\"").replace(", ",",\n\t").replace("...",",").replace(": \"",": ").replace("\",\n",",\n").replace("\"}","\n\t}").replace("{\"","{\n\t\"")+"\n" for h in p.pool]))#debugging
 
 	print("conclusion:",conclusive)
-	print("contradictions:",p.contradictions)
-
+	contras=p.contradictions
+	print("contradictions:",None if len(contras)==0 else " and ".join([str(c) for c in contras[0]]))
+	if len(contras)>0:return()
 	if conclusive==None:return()
 
 	print("proof:")
@@ -494,4 +514,5 @@ def _test():
 
 if __name__=="__main__":
 	import timeit
-	print("Time (ms):",int(timeit.timeit(_test,number=1)*1e+7)/1e+4)
+	timestamp=int(timeit.timeit(_test,number=1)*1e+3)/1e+0
+	print(f"Time: {timestamp/1e+3 if not timestamp<=1e+3 else timestamp} {'m' if timestamp<1e+3 else ''}s")
